@@ -1,0 +1,102 @@
+@startuml backend_containers
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма контейнеров — ИИ-платформа базы знаний и маркетинга (локальное представление: Backend)
+
+' === ПЕРСОНЫ (глобальные ID) ===
+Person(kb_editor, "Контент-менеджер базы знаний", "Загружает документы, ведёт карточки проектов, продуктов и кейсов")
+Person(marketer, "Маркетолог", "Ищет документы, кейсы и факты о продуктах")
+Person(platform_admin, "Администратор платформы", "Настраивает роли, права доступа и коннекторы источников")
+
+' === ВНЕШНИЕ СИСТЕМЫ (глобальные ID) ===
+System_Ext(doc_sources, "Корпоративные хранилища документов", "Файловые серверы (SMB), Nextcloud / Яндекс Диск, Confluence")
+System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM: сделки и кейсы внедрения")
+System_Ext(corporate_idp, "Корпоративный каталог пользователей", "Active Directory / FreeIPA")
+System_Ext(payment_gateway, "Платёжный шлюз", "ЮKassa: оплата SaaS-подписки")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер, Telegram Bot API / Яндекс Мессенджер, FCM / APNs")
+
+System_Boundary(kb_platform, "ИИ-платформа базы знаний и маркетинга") {
+
+    ' === VIBECODER: клиентские приложения (соседи) ===
+    Container(web_app, "Веб-приложение", "React 18 / TypeScript, Vite (SPA), Ant Design", "База знаний, поиск, загрузка документов, админ-раздел (доступ по ролям)")
+    Container(mobile_app, "Мобильное приложение", "React Native (Expo) / TypeScript", "Быстрый поиск кейсов и просмотр материалов")
+
+    ' === ТИМЛИД: шлюз и общая инфраструктура (соседи) ===
+    Container(api_gateway, "API-шлюз", "Nginx 1.25", "Единая точка входа: TLS 1.3, маршрутизация, проверка токена, приём webhook")
+    ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Схемы kb и keycloak: проекты, кейсы, метаданные документов, права, подписки, пользователи")
+    ContainerDb(cache, "Кэш и сессии", "Redis 7", "Кэш результатов поиска")
+    ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Оригиналы документов и извлечённый текст")
+    ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13 (AMQP)", "События document.uploaded / document.indexed и очереди Celery")
+    Container(llm_server, "Локальный LLM-сервер", "vLLM (Qwen2.5 / T-lite) + bge-m3, GPU", "Эмбеддинги внутри контура, OpenAI-совместимый API")
+
+    ' === BACKEND: моя зона ===
+    Container(auth_service, "Сервис авторизации", "Keycloak 24 (OIDC)", "SSO, федерация с AD по LDAP, выпуск и проверка JWT, роли и права на разделы")
+    Container(core_api, "Сервис базы знаний (ядро)", "Python 3.12 / FastAPI, SQLAlchemy 2.0", "Проекты, продукты, кейсы, документы, версии, права; гибридный поиск; CRM, уведомления, подписки")
+    Container(ingestion_service, "Сервис обработки документов", "Python 3.12 / Celery, Docling, Tesseract OCR", "Синхронизация хранилищ, парсинг PDF/DOCX/PPTX/XLSX, OCR, нарезка на фрагменты, эмбеддинги, индексация")
+    ContainerDb(vector_db, "Векторная БД", "Qdrant 1.x", "Эмбеддинги фрагментов документов с метаданными прав доступа")
+}
+
+' === СВЯЗИ: ПЕРСОНЫ И ПРИЛОЖЕНИЯ (стрелка = инициатор сессии) ===
+' № инт. 5
+Rel(kb_editor, web_app, "Загружает документы, ведёт карточки проектов и кейсов", "HTTPS")
+' № инт. 1
+Rel(marketer, web_app, "Ищет документы и кейсы", "HTTPS")
+' № инт. 8
+Rel(platform_admin, web_app, "Настраивает пользователей, роли и коннекторы", "HTTPS")
+' № инт. 13
+Rel(notification_gateway, kb_editor, "Доставляет напоминание актуализировать документ", "E-mail (SMTP)")
+
+' === СВЯЗИ: ВХОД ЧЕРЕЗ ШЛЮЗ (наружу открыт только 443) ===
+' № инт. 16
+Rel(web_app, api_gateway, "REST-запросы, стриминг ответов агента", "HTTPS/JSON, WSS, TCP 443")
+' № инт. 17
+Rel(mobile_app, api_gateway, "REST-запросы, стриминг ответов агента", "HTTPS/JSON, WSS, TCP 443")
+' № инт. 18
+Rel(crm_system, api_gateway, "Сообщает о закрытии сделки (webhook)", "HTTPS/JSON, TCP 443")
+' № инт. 19
+Rel(payment_gateway, api_gateway, "Сообщает статус платежа (webhook)", "HTTPS/JSON, TCP 443")
+' № инт. 21
+Rel(api_gateway, auth_service, "Вход (OIDC), проверка токена и ролей", "HTTP/OIDC, TCP 8081")
+' № инт. 22
+Rel(api_gateway, core_api, "Проксирует запросы базы знаний, поиска и webhook", "HTTP/JSON, TCP 8000")
+
+' === СВЯЗИ: АВТОРИЗАЦИЯ ===
+' № инт. 27
+Rel(auth_service, database, "Хранит пользователей, роли и сессии (схема keycloak)", "SQL/TCP, TCP 5432")
+' № инт. 28
+Rel(auth_service, corporate_idp, "Синхронизирует пользователей и группы", "LDAPS, TCP 636")
+
+' === СВЯЗИ: ЯДРО БАЗЫ ЗНАНИЙ ===
+' № инт. 29
+Rel(core_api, database, "Читает и записывает проекты, кейсы, документы, права, подписки", "SQL/TCP, TCP 5432")
+' № инт. 30
+Rel(core_api, vector_db, "Выполняет семантический поиск с фильтром прав", "gRPC, TCP 6334")
+' № инт. 31
+Rel(core_api, cache, "Кэширует результаты поиска", "RESP/TCP, TCP 6379")
+' № инт. 32
+Rel(core_api, object_storage, "Выдаёт presigned URL на загрузку и скачивание", "HTTPS (S3 API), TCP 9000")
+' № инт. 33
+Rel(core_api, message_broker, "Публикует document.uploaded, usage.event; получает document.indexed, material.generated, report.ready", "AMQP, TCP 5672")
+' № инт. 34
+Rel(core_api, crm_system, "Запрашивает сделки и кейсы, прикрепляет КП к сделке", "HTTPS/REST")
+' № инт. 35
+Rel(core_api, notification_gateway, "Отправляет письма, сообщения и push", "SMTP/TLS 465, HTTPS/REST")
+' № инт. 36
+Rel(core_api, payment_gateway, "Создаёт платёж за подписку", "HTTPS/REST")
+
+' === СВЯЗИ: ОБРАБОТКА ДОКУМЕНТОВ ===
+' № инт. 37
+Rel(ingestion_service, message_broker, "Получает document.uploaded, market.report.ingested; публикует document.indexed", "AMQP, TCP 5672")
+' № инт. 38
+Rel(ingestion_service, doc_sources, "Синхронизирует документы по расписанию", "SMB 3 / WebDAV (HTTPS), REST")
+' № инт. 39
+Rel(ingestion_service, object_storage, "Читает оригиналы, сохраняет извлечённый текст", "HTTPS (S3 API), TCP 9000")
+' № инт. 40
+Rel(ingestion_service, llm_server, "Получает эмбеддинги фрагментов", "HTTP/JSON, TCP 8100")
+' № инт. 41
+Rel(ingestion_service, vector_db, "Записывает векторы фрагментов", "gRPC, TCP 6334")
+' № инт. 42
+Rel(ingestion_service, database, "Сохраняет статус индексации и метаданные документов", "SQL/TCP, TCP 5432")
+
+@enduml
