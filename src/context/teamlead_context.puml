@@ -1,0 +1,56 @@
+@startuml teamlead_context
+
+left to right direction
+
+title Диаграмма системного контекста — ИИ-платформа базы знаний и маркетинга\n(локальное представление: Тимлид)
+
+actor "Маркетолог\n\nИщет кейсы и данные,\nобщается с ИИ-агентом,\nгенерирует материалы" as marketer
+actor "Руководитель маркетинга\n\nСогласует материалы,\nсмотрит дашборды\nи дайджесты" as marketing_head
+actor "Контент-менеджер базы знаний\n\nЗагружает документы,\nведёт карточки проектов,\nпродуктов и кейсов" as kb_editor
+actor "Администратор платформы\n\nПользователи, роли,\nконнекторы и мониторинг" as platform_admin
+
+rectangle "ИИ-платформа базы знаний и маркетинга\n\nЕдиная корпоративная база знаний о продуктах,\nпроектах и кейсах; рыночная аналитика;\nИИ-агент (RAG); генерация маркетинговых материалов" as kb_platform
+
+rectangle "Корпоративный каталог пользователей\n\nActive Directory / FreeIPA\nУчётные записи и группы сотрудников" as corporate_idp
+rectangle "Внешние ИИ-сервисы\n\nGigaChat API / YandexGPT API / Kandinsky\nОблачная генерация текста и изображений" as llm_provider
+rectangle "Платёжный шлюз\n\nЮKassa\nОплата SaaS-подписки" as payment_gateway
+rectangle "Сервисы доставки уведомлений\n\nSMTP / Telegram Bot API / Яндекс Мессенджер / FCM / APNs" as notification_gateway
+rectangle "Платформа CI/CD\n\nGitHub Actions + GHCR\nСборка и доставка образов" as ci_cd
+
+' № инт. 1
+marketer --> kb_platform : Ищет знания, общается с ИИ-агентом,\nгенерирует и редактирует материалы\n[HTTPS/JSON, WSS]
+
+' № инт. 3
+marketing_head --> kb_platform : Согласует материалы,\nсмотрит дашборды и дайджесты\n[HTTPS/JSON]
+
+' № инт. 4
+kb_editor --> kb_platform : Загружает документы, ведёт карточки\nпроектов, продуктов и кейсов\n[HTTPS/JSON]
+
+' № инт. 6
+platform_admin --> kb_platform : Управляет пользователями, ролями,\nконнекторами, смотрит мониторинг\n[HTTPS]
+
+' № инт. 11
+kb_platform --> corporate_idp : Проверяет учётные данные,\nсинхронизирует группы сотрудников\n[LDAPS, TCP 636]
+
+' № инт. 12
+kb_platform --> llm_provider : Запросы генерации текста и изображений\n(облачный режим, резерв)\n[HTTPS/REST]
+
+' № инт. 15
+kb_platform --> payment_gateway : Создаёт платёж за подписку\n[HTTPS/REST]
+
+' № инт. 16
+payment_gateway --> kb_platform : Сообщает статус платежа (webhook)\n[HTTPS/JSON]
+
+' № инт. 17
+kb_platform --> notification_gateway : Передаёт письма, сообщения и push\nна доставку, оповещения об инцидентах\n[SMTP/TLS, HTTPS/REST]
+
+' № инт. 23
+notification_gateway --> platform_admin : Оповещения об инцидентах\n[E-mail (SMTP)]
+
+' лок.
+platform_admin --> ci_cd : Запускает и утверждает выпуск релиза\n[HTTPS / Git over SSH]
+
+' лок.
+ci_cd --> kb_platform : Разворачивает новые версии образов\n[SSH / Docker Registry API]
+
+@enduml

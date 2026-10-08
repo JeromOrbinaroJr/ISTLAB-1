@@ -1,0 +1,41 @@
+@startuml vibecoder_context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма системного контекста — ИИ-платформа базы знаний и маркетинга (локальное представление: Vibecoder)
+
+Person(marketer, "Маркетолог", "Ищет кейсы и данные, общается с ИИ-агентом, генерирует презентации, КП, one-pager и посты")
+Person(bd_manager, "Менеджер по развитию бизнеса", "На выставках и встречах быстро находит кейсы по отрасли и отправляет материалы партнёрам с телефона")
+Person(marketing_head, "Руководитель маркетинга", "Согласует материалы, смотрит дашборды эффективности и рыночные дайджесты")
+
+System(kb_platform, "ИИ-платформа базы знаний и маркетинга", "Единая платформа: корпоративная база знаний о продуктах, проектах и кейсах, интеграция рыночной аналитики, ИИ-агент (RAG) и генерация маркетинговых материалов")
+
+System_Ext(llm_provider, "Внешние ИИ-сервисы", "GigaChat API, YandexGPT API, Kandinsky. Облачная генерация текста и изображений (SaaS-режим; в закрытом контуре отключается)")
+System_Ext(corporate_idp, "Корпоративный каталог пользователей", "Active Directory / FreeIPA. Учётные записи и группы сотрудников, SSO")
+System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM. Клиенты, сделки, кейсы внедрения; сюда прикрепляются КП")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер, Telegram Bot API / Яндекс Мессенджер, FCM / APNs. Доставка писем, сообщений и push людям")
+
+' № инт. 1
+Rel(marketer, kb_platform, "Ищет знания, общается с ИИ-агентом, генерирует и редактирует материалы", "HTTPS/JSON, WSS")
+' № инт. 2
+Rel(bd_manager, kb_platform, "Находит кейсы и готовые материалы с мобильного устройства", "HTTPS/JSON")
+' № инт. 3
+Rel(marketing_head, kb_platform, "Согласует материалы, смотрит дашборды и дайджесты", "HTTPS/JSON")
+
+' № инт. 11
+Rel(kb_platform, corporate_idp, "Проверяет учётные данные, синхронизирует группы сотрудников", "LDAPS, TCP 636")
+' № инт. 12
+Rel(kb_platform, llm_provider, "Запросы генерации текста и изображений (облачный режим, резерв)", "HTTPS/REST")
+' № инт. 9
+Rel(kb_platform, crm_system, "Запрашивает сделки и кейсы, прикрепляет КП к сделке", "HTTPS/REST")
+' № инт. 17
+Rel(kb_platform, notification_gateway, "Передаёт письма, сообщения и push на доставку, оповещения об инцидентах", "SMTP/TLS, HTTPS/REST")
+
+' № инт. 18
+Rel(notification_gateway, marketer, "«Материал готов», «возвращён на доработку»", "E-mail, мессенджер")
+' № инт. 19
+Rel(notification_gateway, bd_manager, "Push со ссылкой на готовый материал", "FCM / APNs")
+' № инт. 20
+Rel(notification_gateway, marketing_head, "Запрос на согласование, еженедельный дайджест рынка", "E-mail (SMTP)")
+
+@enduml

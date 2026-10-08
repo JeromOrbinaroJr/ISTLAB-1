@@ -1,0 +1,79 @@
+@startuml main_context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма системного контекста — ИИ-платформа базы знаний и маркетинга (интеграционное представление)
+
+' === ЕДИНЫЙ ПУЛ РОЛЕЙ (6) ===
+Person(marketer, "Маркетолог", "Ищет кейсы и данные, общается с ИИ-агентом, генерирует презентации, КП, one-pager и посты")
+Person(bd_manager, "Менеджер по развитию бизнеса", "На выставках и встречах быстро находит кейсы по отрасли и отправляет материалы партнёрам с телефона")
+Person(marketing_head, "Руководитель маркетинга", "Согласует материалы, смотрит дашборды эффективности и рыночные дайджесты")
+Person(kb_editor, "Контент-менеджер базы знаний", "Загружает документы, ведёт карточки проектов, продуктов и кейсов, актуализирует данные")
+Person(analyst, "Аналитик рынка", "Подключает внешние источники, настраивает показатели, витрины и регламентные отчёты")
+Person(platform_admin, "Администратор платформы", "Пользователи, роли, коннекторы, мониторинг; в закрытом контуре — ИТ-служба заказчика")
+
+' === ПРОЕКТИРУЕМАЯ СИСТЕМА (чёрный ящик) ===
+System(kb_platform, "ИИ-платформа базы знаний и маркетинга", "Единая платформа: корпоративная база знаний о продуктах, проектах и кейсах, интеграция рыночной аналитики, ИИ-агент (RAG) и генерация маркетинговых материалов")
+
+' === ЕДИНЫЙ ПУЛ ВНЕШНИХ СИСТЕМ (8 из 9; ci_cd в интеграцию не входит) ===
+System_Ext(doc_sources, "Корпоративные хранилища документов", "Файловые серверы (SMB), Nextcloud / Яндекс Диск, Confluence")
+System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM: клиенты, сделки, кейсы внедрения")
+System_Ext(corporate_idp, "Корпоративный каталог пользователей", "Active Directory / FreeIPA: учётные записи, группы, SSO")
+System_Ext(llm_provider, "Внешние ИИ-сервисы", "GigaChat API, YandexGPT API, Kandinsky: облачная генерация текста и изображений")
+System_Ext(market_sources, "Источники рыночной аналитики", "TAdviser, Strategy Partners, Росстат API, СПАРК-Интерфакс, RSS отраслевых СМИ")
+System_Ext(bi_platform, "BI-платформа", "Yandex DataLens / Apache Superset: ad-hoc дашборды поверх витрин")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер, Telegram Bot API / Яндекс Мессенджер, FCM / APNs")
+System_Ext(payment_gateway, "Платёжный шлюз", "ЮKassa: рекуррентные платежи за SaaS-подписку")
+
+' === СВЯЗИ: ЛЮДИ -> СИСТЕМА (стрелка = инициатор сессии) ===
+' № инт. 1
+Rel(marketer, kb_platform, "Ищет знания, общается с ИИ-агентом, генерирует и редактирует материалы", "HTTPS/JSON, WSS")
+' № инт. 2
+Rel(bd_manager, kb_platform, "Находит кейсы и готовые материалы с мобильного устройства", "HTTPS/JSON")
+' № инт. 3
+Rel(marketing_head, kb_platform, "Согласует материалы, смотрит дашборды и дайджесты", "HTTPS/JSON")
+' № инт. 4
+Rel(kb_editor, kb_platform, "Загружает документы, ведёт карточки проектов, продуктов и кейсов", "HTTPS/JSON")
+' № инт. 5
+Rel(analyst, kb_platform, "Подключает источники рынка, настраивает показатели и витрины", "HTTPS/JSON")
+' № инт. 6
+Rel(platform_admin, kb_platform, "Управляет пользователями, ролями, коннекторами, смотрит мониторинг", "HTTPS")
+' № инт. 7
+Rel(analyst, bi_platform, "Строит ad-hoc дашборды поверх витрин", "HTTPS")
+
+' === СВЯЗИ: СИСТЕМА <-> ВНЕШНИЕ СИСТЕМЫ ===
+' № инт. 8
+Rel(kb_platform, doc_sources, "Синхронизирует документы по расписанию", "SMB 3 / WebDAV (HTTPS), REST")
+' № инт. 9
+Rel(kb_platform, crm_system, "Запрашивает сделки и кейсы, прикрепляет КП к сделке", "HTTPS/REST")
+' № инт. 10
+Rel(crm_system, kb_platform, "Сообщает о закрытии сделки (webhook)", "HTTPS/JSON")
+' № инт. 11
+Rel(kb_platform, corporate_idp, "Проверяет учётные данные, синхронизирует группы сотрудников", "LDAPS, TCP 636")
+' № инт. 12
+Rel(kb_platform, llm_provider, "Запросы генерации текста и изображений (облачный режим, резерв)", "HTTPS/REST")
+' № инт. 13
+Rel(kb_platform, market_sources, "Забирает отчёты, рейтинги, новости и данные о компаниях", "HTTPS/REST, RSS")
+' № инт. 14
+Rel(bi_platform, kb_platform, "Читает витрины данных (только чтение)", "SQL over HTTPS")
+' № инт. 15
+Rel(kb_platform, payment_gateway, "Создаёт платёж за подписку", "HTTPS/REST")
+' № инт. 16
+Rel(payment_gateway, kb_platform, "Сообщает статус платежа (webhook)", "HTTPS/JSON")
+' № инт. 17
+Rel(kb_platform, notification_gateway, "Передаёт письма, сообщения и push на доставку, оповещения об инцидентах", "SMTP/TLS, HTTPS/REST")
+
+' === СВЯЗИ: ДОСТАВКА УВЕДОМЛЕНИЙ ЛЮДЯМ ===
+' № инт. 18
+Rel(notification_gateway, marketer, "«Материал готов», «возвращён на доработку»", "E-mail, мессенджер")
+' № инт. 19
+Rel(notification_gateway, bd_manager, "Push со ссылкой на готовый материал", "FCM / APNs")
+' № инт. 20
+Rel(notification_gateway, marketing_head, "Запрос на согласование, еженедельный дайджест рынка", "E-mail (SMTP)")
+' № инт. 21
+Rel(notification_gateway, kb_editor, "Напоминание актуализировать устаревший документ", "E-mail (SMTP)")
+' № инт. 22
+Rel(notification_gateway, analyst, "Оповещение о сбое загрузки источника", "E-mail (SMTP)")
+' № инт. 23
+Rel(notification_gateway, platform_admin, "Оповещения об инцидентах", "E-mail (SMTP)")
+@enduml

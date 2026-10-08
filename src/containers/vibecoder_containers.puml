@@ -1,0 +1,89 @@
+@startuml vibecoder_containers
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма контейнеров — ИИ-платформа базы знаний и маркетинга (локальное представление: Vibecoder)
+
+Person(marketer, "Маркетолог", "Ищет кейсы и данные, общается с ИИ-агентом, генерирует презентации, КП, one-pager и посты")
+Person(bd_manager, "Менеджер по развитию бизнеса", "На выставках и встречах быстро находит кейсы по отрасли и отправляет материалы партнёрам с телефона")
+Person(marketing_head, "Руководитель маркетинга", "Согласует материалы, смотрит дашборды эффективности и рыночные дайджесты")
+
+System_Boundary(kb_platform, "ИИ-платформа базы знаний и маркетинга") {
+    Container(web_app, "Веб-приложение", "React 18 / TypeScript, Vite (SPA), Ant Design", "База знаний, поиск, чат с ИИ-агентом, генератор и редактор материалов, согласование, админ-раздел (доступ по ролям)")
+    Container(mobile_app, "Мобильное приложение", "React Native (Expo) / TypeScript", "Быстрый поиск кейсов, чат с агентом, просмотр и отправка готовых материалов, push")
+    Container(api_gateway, "API-шлюз", "Nginx 1.25", "Единая точка входа: TLS 1.3, маршрутизация, проверка токена, rate limit, WebSocket, приём webhook и запросов BI")
+    Container(agent_service, "ИИ-агент", "Python 3.12 / FastAPI, LangGraph", "Оркестрация RAG: поиск фрагментов, вызов инструментов, сборка промпта, стриминг ответа со ссылками на источники")
+    Container(generation_service, "Сервис генерации материалов", "Python 3.12 / FastAPI, Celery, python-pptx, python-docx, WeasyPrint", "Генерация презентаций, КП, one-pager, постов по корпоративным шаблонам (асинхронные задания)")
+    Container(core_api, "Сервис базы знаний (ядро)", "Python 3.12 / FastAPI, SQLAlchemy 2.0", "Проекты, продукты, кейсы, документы, версии, права; гибридный поиск; согласование; CRM, уведомления, подписки")
+    Container(analytics_service, "Сервис аналитики и инсайтов", "Python 3.12 / FastAPI, pandas", "Показатели, сопоставление проектов компании с рынком, дашборды, дайджесты, выгрузки XLSX/PDF")
+    Container(llm_server, "Локальный LLM-сервер", "vLLM (Qwen2.5 / T-lite) + bge-m3, GPU", "Генерация и эмбеддинги внутри контура, OpenAI-совместимый API")
+    ContainerDb(cache, "Кэш и сессии", "Redis 7", "Кэш поиска, контекст диалогов агента, лимиты")
+    ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Основные данные: пользователи, проекты, кейсы, метаданные документов, материалы, диалоги, подписки")
+    ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Оригиналы документов, шаблоны, сгенерированные PPTX/DOCX/PDF, сырые отчёты рынка")
+    ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13 (AMQP)", "События между сервисами и очереди Celery")
+}
+
+System_Ext(llm_provider, "Внешние ИИ-сервисы", "GigaChat API, YandexGPT API, Kandinsky. Облачная генерация текста и изображений (SaaS-режим; в закрытом контуре отключается)")
+System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM. Клиенты, сделки, кейсы внедрения; сюда прикрепляются КП")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер, Telegram Bot API / Яндекс Мессенджер, FCM / APNs. Доставка писем, сообщений и push людям")
+
+' № инт. 1
+Rel(marketer, web_app, "Поиск, чат с агентом, генерация и правка материалов", "HTTPS")
+' № инт. 2
+Rel(bd_manager, mobile_app, "Ищет кейсы, просматривает и отправляет материалы", "iOS / Android")
+' № инт. 3
+Rel(marketing_head, web_app, "Согласует материалы, смотрит дашборды", "HTTPS")
+' № инт. 4
+Rel(marketing_head, mobile_app, "Согласует материалы и смотрит ключевые показатели с телефона", "iOS / Android")
+
+' № инт. 16
+Rel(web_app, api_gateway, "REST-запросы, стриминг ответов агента", "HTTPS/JSON, WSS, TCP 443")
+' № инт. 17
+Rel(mobile_app, api_gateway, "REST-запросы, стриминг ответов агента", "HTTPS/JSON, WSS, TCP 443")
+
+' № инт. 22
+Rel(api_gateway, core_api, "Проксирует запросы базы знаний, поиска, согласования, webhook", "HTTP/JSON, TCP 8000")
+' № инт. 23
+Rel(api_gateway, agent_service, "Проксирует диалоги с агентом, стриминг", "HTTP/JSON, WebSocket, TCP 8002")
+' № инт. 24
+Rel(api_gateway, generation_service, "Создаёт задания генерации, отдаёт статус", "HTTP/JSON, TCP 8003")
+
+' № инт. 43
+Rel(agent_service, core_api, "Ищет релевантные фрагменты с учётом прав (RAG)", "HTTP/JSON, TCP 8000")
+' № инт. 44
+Rel(agent_service, analytics_service, "Запрашивает рыночные показатели (инструмент агента)", "HTTP/JSON, TCP 8004")
+' № инт. 45
+Rel(agent_service, llm_server, "Генерирует ответ", "HTTP/JSON (OpenAI API), TCP 8100")
+' № инт. 46
+Rel(agent_service, llm_provider, "Генерация в облачном режиме и как резерв", "HTTPS/REST")
+' № инт. 47
+Rel(agent_service, cache, "Контекст диалога", "RESP/TCP, TCP 6379")
+' № инт. 48
+Rel(agent_service, database, "История диалогов, шаблоны промптов", "SQL/TCP, TCP 5432")
+
+' № инт. 49
+Rel(generation_service, agent_service, "Запрашивает структуру и тексты слайдов", "HTTP/JSON, TCP 8002")
+' № инт. 50
+Rel(generation_service, object_storage, "Читает шаблоны, сохраняет PPTX/DOCX/PDF", "HTTPS (S3 API), TCP 9000")
+' № инт. 51
+Rel(generation_service, message_broker, "Очередь заданий Celery, публикует material.generated", "AMQP, TCP 5672")
+' № инт. 52
+Rel(generation_service, database, "Статусы заданий, метаданные материалов", "SQL/TCP, TCP 5432")
+' № инт. 53
+Rel(generation_service, llm_provider, "Генерирует иллюстрации (облачный режим)", "HTTPS/REST")
+
+' № инт. 33
+Rel(core_api, message_broker, "Публикует document.uploaded, usage.event; получает document.indexed, material.generated, report.ready", "AMQP, TCP 5672")
+' № инт. 34
+Rel(core_api, crm_system, "Запрашивает сделки и кейсы, прикрепляет КП к сделке", "HTTPS/REST")
+' № инт. 35
+Rel(core_api, notification_gateway, "Отправляет письма, сообщения и push", "SMTP/TLS 465, HTTPS/REST")
+
+' № инт. 10
+Rel(notification_gateway, marketer, "«Материал готов», «на доработку»", "E-mail, мессенджер")
+' № инт. 11
+Rel(notification_gateway, bd_manager, "Push со ссылкой на материал", "FCM / APNs")
+' № инт. 12
+Rel(notification_gateway, marketing_head, "Запрос на согласование, дайджест", "E-mail (SMTP)")
+
+@enduml

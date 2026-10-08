@@ -1,0 +1,214 @@
+@startuml main_containers
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма контейнеров — ИИ-платформа базы знаний и маркетинга (интеграционное представление)
+
+' === ЕДИНЫЙ ПУЛ РОЛЕЙ ===
+Person(marketer, "Маркетолог", "Ищет кейсы и данные, общается с ИИ-агентом, генерирует материалы")
+Person(bd_manager, "Менеджер по развитию бизнеса", "Находит кейсы и отправляет материалы партнёрам с телефона")
+Person(marketing_head, "Руководитель маркетинга", "Согласует материалы, смотрит дашборды и дайджесты")
+Person(kb_editor, "Контент-менеджер базы знаний", "Загружает документы, ведёт карточки проектов и кейсов")
+Person(analyst, "Аналитик рынка", "Подключает источники, настраивает показатели и витрины")
+Person(platform_admin, "Администратор платформы", "Пользователи, роли, коннекторы, мониторинг")
+
+' === ЕДИНЫЙ ПУЛ ВНЕШНИХ СИСТЕМ ===
+System_Ext(doc_sources, "Корпоративные хранилища документов", "SMB, Nextcloud / Яндекс Диск, Confluence")
+System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM")
+System_Ext(corporate_idp, "Корпоративный каталог пользователей", "Active Directory / FreeIPA")
+System_Ext(llm_provider, "Внешние ИИ-сервисы", "GigaChat API, YandexGPT API, Kandinsky")
+System_Ext(market_sources, "Источники рыночной аналитики", "TAdviser, Strategy Partners, Росстат API, СПАРК-Интерфакс, RSS")
+System_Ext(bi_platform, "BI-платформа", "Yandex DataLens / Apache Superset")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP, Telegram Bot API / Яндекс Мессенджер, FCM / APNs")
+System_Ext(payment_gateway, "Платёжный шлюз", "ЮKassa (рекуррентные платежи)")
+
+System_Boundary(kb_platform, "ИИ-платформа базы знаний и маркетинга") {
+  ' === VIBECODER: клиенты и ИИ-контур ===
+  Container(web_app, "Веб-приложение", "React 18 / TypeScript, Vite (SPA), Ant Design", "База знаний, поиск, чат с ИИ-агентом, генератор и редактор материалов, согласование, админ-раздел (доступ по ролям).")
+  Container(mobile_app, "Мобильное приложение", "React Native (Expo) / TypeScript", "Быстрый поиск кейсов, чат с агентом, просмотр и отправка материалов, согласование, push.")
+  Container(agent_service, "ИИ-агент", "Python 3.12 / FastAPI, LangGraph", "Оркестрация RAG: поиск фрагментов, вызов инструментов, сборка промпта, стриминг ответа со ссылками на источники.")
+  Container(generation_service, "Сервис генерации материалов", "Python 3.12 / FastAPI, Celery, python-pptx, python-docx, WeasyPrint", "Презентации, КП, one-pager, посты по корпоративным шаблонам (асинхронные задания).")
+
+  ' === BACKEND: ядро, авторизация, индексация ===
+  Container(auth_service, "Сервис авторизации", "Keycloak 24 (OIDC)", "SSO, федерация с AD по LDAP, выпуск и проверка JWT, роли и права на разделы.")
+  Container(core_api, "Сервис базы знаний (ядро)", "Python 3.12 / FastAPI, SQLAlchemy 2.0", "Проекты, продукты, кейсы, документы, версии, права; гибридный поиск; согласование; CRM, уведомления, подписки.")
+  Container(ingestion_service, "Сервис обработки документов", "Python 3.12 / Celery, Docling, Tesseract OCR", "Синхронизация хранилищ, парсинг, OCR, нарезка на фрагменты, эмбеддинги, индексация.")
+  ContainerDb(vector_db, "Векторная БД", "Qdrant 1.x", "Эмбеддинги фрагментов документов с метаданными прав доступа.")
+
+  ' === АНАЛИТИК: контур данных ===
+  Container(market_collector, "Сервис сбора рыночной аналитики (ETL)", "Python 3.12 / Apache Airflow, httpx, pandas", "По расписанию забирает рыночные данные и события использования, извлекает показатели, грузит витрины.")
+  Container(analytics_service, "Сервис аналитики и инсайтов", "Python 3.12 / FastAPI, pandas", "Показатели, сопоставление проектов с рынком, дашборды, дайджесты, выгрузки XLSX/PDF.")
+  ContainerDb(dwh, "Аналитическое хранилище", "ClickHouse 24", "Витрины: рыночные показатели, использование базы знаний, эффективность материалов.")
+
+  ' === ТИМЛИД: шлюз, хранилища, брокер, LLM, наблюдаемость ===
+  Container(api_gateway, "API-шлюз", "Nginx 1.25", "Единая точка входа: TLS 1.3, маршрутизация, проверка токена, rate limit, WebSocket, приём webhook и запросов BI.")
+  ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Пользователи, проекты, кейсы, метаданные документов, материалы, диалоги, подписки.")
+  ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13 (AMQP)", "События между сервисами и очереди Celery.")
+  ContainerDb(cache, "Кэш и сессии", "Redis 7", "Кэш поиска, контекст диалогов агента, лимиты.")
+  ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Оригиналы документов, шаблоны, сгенерированные материалы, сырые отчёты рынка.")
+  Container(llm_server, "Локальный LLM-сервер", "vLLM (Qwen2.5 / T-lite) + bge-m3, GPU", "Генерация и эмбеддинги внутри контура, OpenAI-совместимый API.")
+  Container(monitoring, "Система наблюдаемости", "Prometheus, Alertmanager, Grafana, Loki", "Метрики (в т.ч. GPU), логи, панели, оповещения.")
+}
+
+' === ЛЮДИ -> ПРИЛОЖЕНИЯ ===
+' № инт. 1
+Rel(marketer, web_app, "Поиск, чат с агентом, генерация и правка материалов", "HTTPS")
+' № инт. 2
+Rel(bd_manager, mobile_app, "Ищет кейсы, просматривает и отправляет материалы", "iOS / Android")
+' № инт. 3
+Rel(marketing_head, web_app, "Согласует материалы, смотрит дашборды", "HTTPS")
+' № инт. 4
+Rel(marketing_head, mobile_app, "Согласует материалы и смотрит ключевые показатели с телефона", "iOS / Android")
+' № инт. 5
+Rel(kb_editor, web_app, "Загружает документы, ведёт карточки проектов и кейсов", "HTTPS")
+' № инт. 6
+Rel(analyst, web_app, "Подключает источники, настраивает показатели и витрины", "HTTPS")
+' № инт. 7
+Rel(analyst, bi_platform, "Строит ad-hoc дашборды поверх витрин", "HTTPS")
+' № инт. 8
+Rel(platform_admin, web_app, "Пользователи, роли, коннекторы", "HTTPS")
+' № инт. 9
+Rel(platform_admin, monitoring, "Смотрит панели и логи (из корпоративной сети)", "HTTPS")
+
+' === ДОСТАВКА УВЕДОМЛЕНИЙ ЛЮДЯМ ===
+' № инт. 10
+Rel(notification_gateway, marketer, "«Материал готов», «на доработку»", "E-mail, мессенджер")
+' № инт. 11
+Rel(notification_gateway, bd_manager, "Push со ссылкой на материал", "FCM / APNs")
+' № инт. 12
+Rel(notification_gateway, marketing_head, "Запрос на согласование, дайджест", "E-mail (SMTP)")
+' № инт. 13
+Rel(notification_gateway, kb_editor, "Напоминание актуализировать документ", "E-mail (SMTP)")
+' № инт. 14
+Rel(notification_gateway, analyst, "Сбой загрузки источника", "E-mail (SMTP)")
+' № инт. 15
+Rel(notification_gateway, platform_admin, "Оповещения об инцидентах", "E-mail (SMTP)")
+
+' === ВХОД В ПЕРИМЕТР (наружу открыт только 443) ===
+' № инт. 16
+Rel(web_app, api_gateway, "REST-запросы, стриминг ответов агента", "HTTPS/JSON, WSS, TCP 443")
+' № инт. 17
+Rel(mobile_app, api_gateway, "REST-запросы, стриминг ответов агента", "HTTPS/JSON, WSS, TCP 443")
+' № инт. 18
+Rel(crm_system, api_gateway, "Событие закрытия сделки (webhook)", "HTTPS/JSON, TCP 443")
+' № инт. 19
+Rel(payment_gateway, api_gateway, "Статус платежа (webhook)", "HTTPS/JSON, TCP 443")
+' № инт. 20
+Rel(bi_platform, api_gateway, "Чтение витрин (только чтение)", "SQL over HTTPS, TCP 443")
+
+' === ШЛЮЗ -> СЕРВИСЫ ===
+' № инт. 21
+Rel(api_gateway, auth_service, "Вход (OIDC), проверка токена и ролей", "HTTP/OIDC, TCP 8081")
+' № инт. 22
+Rel(api_gateway, core_api, "Проксирует запросы базы знаний, поиска, согласования, webhook", "HTTP/JSON, TCP 8000")
+' № инт. 23
+Rel(api_gateway, agent_service, "Проксирует диалоги с агентом, стриминг", "HTTP/JSON, WebSocket, TCP 8002")
+' № инт. 24
+Rel(api_gateway, generation_service, "Создаёт задания генерации, отдаёт статус", "HTTP/JSON, TCP 8003")
+' № инт. 25
+Rel(api_gateway, analytics_service, "Проксирует запросы дашбордов и отчётов", "HTTP/JSON, TCP 8004")
+' № инт. 26
+Rel(api_gateway, dwh, "Проксирует запросы BI (read-only пользователь)", "HTTP, TCP 8123")
+
+' === BACKEND: АВТОРИЗАЦИЯ ===
+' № инт. 27
+Rel(auth_service, database, "Пользователи, роли, сессии (схема keycloak)", "SQL/TCP, TCP 5432")
+' № инт. 28
+Rel(auth_service, corporate_idp, "Федерация пользователей и групп", "LDAPS, TCP 636")
+
+' === BACKEND: ЯДРО ===
+' № инт. 29
+Rel(core_api, database, "Проекты, кейсы, документы, права, материалы, подписки", "SQL/TCP, TCP 5432")
+' № инт. 30
+Rel(core_api, vector_db, "Семантический поиск с фильтром прав", "gRPC, TCP 6334")
+' № инт. 31
+Rel(core_api, cache, "Кэш результатов поиска", "RESP/TCP, TCP 6379")
+' № инт. 32
+Rel(core_api, object_storage, "Выдаёт presigned URL на загрузку и скачивание", "HTTPS (S3 API), TCP 9000")
+' № инт. 33
+Rel(core_api, message_broker, "Публикует document.uploaded, usage.event; получает document.indexed, material.generated, report.ready", "AMQP, TCP 5672")
+' № инт. 34
+Rel(core_api, crm_system, "Запрашивает сделки и кейсы, прикрепляет КП к сделке", "HTTPS/REST")
+' № инт. 35
+Rel(core_api, notification_gateway, "Отправляет письма, сообщения и push", "SMTP/TLS 465, HTTPS/REST")
+' № инт. 36
+Rel(core_api, payment_gateway, "Создаёт платёж за подписку", "HTTPS/REST")
+
+' === BACKEND: ИНДЕКСАЦИЯ ===
+' № инт. 37
+Rel(ingestion_service, message_broker, "Получает document.uploaded, market.report.ingested; публикует document.indexed", "AMQP, TCP 5672")
+' № инт. 38
+Rel(ingestion_service, doc_sources, "Синхронизирует документы по расписанию", "SMB 3 / WebDAV (HTTPS), REST")
+' № инт. 39
+Rel(ingestion_service, object_storage, "Читает оригиналы, сохраняет извлечённый текст", "HTTPS (S3 API), TCP 9000")
+' № инт. 40
+Rel(ingestion_service, llm_server, "Получает эмбеддинги фрагментов", "HTTP/JSON, TCP 8100")
+' № инт. 41
+Rel(ingestion_service, vector_db, "Записывает векторы фрагментов", "gRPC, TCP 6334")
+' № инт. 42
+Rel(ingestion_service, database, "Статус индексации, метаданные документов", "SQL/TCP, TCP 5432")
+
+' === VIBECODER: ИИ-АГЕНТ ===
+' № инт. 43
+Rel(agent_service, core_api, "Ищет релевантные фрагменты с учётом прав (RAG)", "HTTP/JSON, TCP 8000")
+' № инт. 44
+Rel(agent_service, analytics_service, "Запрашивает рыночные показатели (инструмент агента)", "HTTP/JSON, TCP 8004")
+' № инт. 45
+Rel(agent_service, llm_server, "Генерирует ответ", "HTTP/JSON (OpenAI API), TCP 8100")
+' № инт. 46
+Rel(agent_service, llm_provider, "Генерация в облачном режиме и как резерв", "HTTPS/REST")
+' № инт. 47
+Rel(agent_service, cache, "Контекст диалога", "RESP/TCP, TCP 6379")
+' № инт. 48
+Rel(agent_service, database, "История диалогов, шаблоны промптов", "SQL/TCP, TCP 5432")
+
+' === VIBECODER: ГЕНЕРАЦИЯ ===
+' № инт. 49
+Rel(generation_service, agent_service, "Запрашивает структуру и тексты слайдов", "HTTP/JSON, TCP 8002")
+' № инт. 50
+Rel(generation_service, object_storage, "Читает шаблоны, сохраняет PPTX/DOCX/PDF", "HTTPS (S3 API), TCP 9000")
+' № инт. 51
+Rel(generation_service, message_broker, "Очередь заданий Celery, публикует material.generated", "AMQP, TCP 5672")
+' № инт. 52
+Rel(generation_service, database, "Статусы заданий, метаданные материалов", "SQL/TCP, TCP 5432")
+' № инт. 53
+Rel(generation_service, llm_provider, "Генерирует иллюстрации (облачный режим)", "HTTPS/REST")
+
+' === АНАЛИТИК: СБОР РЫНОЧНОЙ АНАЛИТИКИ ===
+' № инт. 54
+Rel(market_collector, market_sources, "Забирает отчёты, рейтинги, новости, данные о компаниях", "HTTPS/REST, RSS")
+' № инт. 55
+Rel(market_collector, crm_system, "Выгружает воронку сделок", "HTTPS/REST")
+' № инт. 56
+Rel(market_collector, llm_server, "Извлекает показатели и суммирует отчёты", "HTTP/JSON, TCP 8100")
+' № инт. 57
+Rel(market_collector, object_storage, "Сохраняет сырые отчёты", "HTTPS (S3 API), TCP 9000")
+' № инт. 58
+Rel(market_collector, dwh, "Загружает данные и пересчитывает витрины", "HTTP, TCP 8123")
+' № инт. 59
+Rel(market_collector, message_broker, "Читает usage.event, material.generated; публикует market.report.ingested", "AMQP, TCP 5672")
+' № инт. 60
+Rel(market_collector, database, "Инкрементально выгружает проекты и кейсы", "SQL/TCP, TCP 5432")
+
+' === АНАЛИТИК: ОТЧЁТЫ ===
+' № инт. 61
+Rel(analytics_service, dwh, "Аналитические запросы к витринам", "HTTP, TCP 8123")
+' № инт. 62
+Rel(analytics_service, object_storage, "Сохраняет файлы отчётов", "HTTPS (S3 API), TCP 9000")
+' № инт. 63
+Rel(analytics_service, message_broker, "Публикует report.ready", "AMQP, TCP 5672")
+
+' === НАБЛЮДАЕМОСТЬ (ключевые цели опроса; полный перечень — в таблице портов) ===
+' № инт. 64
+Rel(monitoring, api_gateway, "Опрашивает метрики шлюза", "HTTP GET /metrics")
+' № инт. 65
+Rel(monitoring, core_api, "Опрашивает метрики сервиса", "HTTP GET /metrics")
+' № инт. 66
+Rel(monitoring, agent_service, "Опрашивает метрики агента", "HTTP GET /metrics")
+' № инт. 67
+Rel(monitoring, llm_server, "Опрашивает метрики GPU и очереди запросов", "HTTP GET /metrics")
+' № инт. 68
+Rel(monitoring, database, "Опрашивает метрики СУБД", "HTTP GET /metrics")
+' № инт. 69
+Rel(monitoring, notification_gateway, "Отправляет оповещения об инцидентах", "SMTP/TLS, TCP 465")
+@enduml

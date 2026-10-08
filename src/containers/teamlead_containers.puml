@@ -1,0 +1,134 @@
+@startuml teamlead_containers
+
+left to right direction
+
+title Диаграмма контейнеров — ИИ-платформа базы знаний и маркетинга\n(локальное представление: Тимлид)
+
+actor "Маркетолог" as marketer
+actor "Руководитель маркетинга" as marketing_head
+actor "Контент-менеджер базы знаний" as kb_editor
+actor "Администратор платформы" as platform_admin
+
+rectangle "Корпоративный каталог пользователей\nActive Directory / FreeIPA" as corporate_idp
+rectangle "Внешние ИИ-сервисы\nGigaChat API / YandexGPT API / Kandinsky" as llm_provider
+rectangle "Платёжный шлюз\nЮKassa" as payment_gateway
+rectangle "Сервисы доставки уведомлений\nSMTP / мессенджеры / FCM / APNs" as notification_gateway
+
+package "ИИ-платформа базы знаний и маркетинга" as kb_platform {
+
+  rectangle "Веб-приложение\n[React 18 / TypeScript, Vite, Ant Design]\nБаза знаний, поиск, чат, генерация, согласование" as web_app
+  rectangle "Мобильное приложение\n[React Native (Expo) / TypeScript]\nБыстрый поиск, чат, просмотр и отправка материалов" as mobile_app
+
+  rectangle "API-шлюз\n[Nginx 1.25]\nTLS 1.3, маршрутизация, JWT, rate limit, WebSocket, webhook" as api_gateway
+
+  rectangle "Сервис авторизации\n[Keycloak 24]\nSSO, OIDC, LDAP-федерация, JWT, роли" as auth_service
+  rectangle "Сервис базы знаний (ядро)\n[Python 3.12 / FastAPI, SQLAlchemy 2.0]\nПроекты, кейсы, документы, права, поиск, согласование" as core_api
+  rectangle "ИИ-агент\n[Python 3.12 / FastAPI, LangGraph]\nRAG, инструменты, промпты, стриминг ответов" as agent_service
+
+  database "Реляционная СУБД\n[PostgreSQL 16]\nОсновные данные, пользователи, диалоги, подписки" as database
+  database "Кэш и сессии\n[Redis 7]\nКэш поиска, контекст диалогов, лимиты" as cache
+  database "Объектное хранилище\n[MinIO / S3 API]\nДокументы, шаблоны, PPTX/DOCX/PDF" as object_storage
+  queue "Брокер сообщений\n[RabbitMQ 3.13 / AMQP]\nСобытия сервисов и очереди Celery" as message_broker
+
+  rectangle "Локальный LLM-сервер\n[vLLM + Qwen2.5 / T-lite + bge-m3, GPU]\nГенерация и эмбеддинги внутри контура" as llm_server
+
+  rectangle "Система наблюдаемости\n[Prometheus, Alertmanager, Grafana, Loki]\nМетрики, логи, панели, оповещения" as monitoring
+}
+
+' № инт. 1
+marketer --> web_app : Поиск, чат с агентом, генерация\nи правка материалов\n[HTTPS]
+
+' № инт. 3
+marketing_head --> web_app : Согласует материалы,\nсмотрит дашборды\n[HTTPS]
+
+' № инт. 4
+marketing_head --> mobile_app : Согласует материалы и смотрит\nключевые показатели с телефона\n[iOS / Android]
+
+' № инт. 5
+kb_editor --> web_app : Загружает документы, ведёт карточки\nпроектов и кейсов\n[HTTPS]
+
+' № инт. 8
+platform_admin --> web_app : Пользователи, роли, коннекторы\n[HTTPS]
+
+' № инт. 9
+platform_admin --> monitoring : Смотрит панели и логи\n(из корпоративной сети)\n[HTTPS]
+
+' № инт. 15
+notification_gateway --> platform_admin : Оповещения об инцидентах\n[E-mail (SMTP)]
+
+' № инт. 16
+web_app --> api_gateway : REST-запросы, стриминг ответов агента\n[HTTPS/JSON, WSS, TCP 443]
+
+' № инт. 17
+mobile_app --> api_gateway : REST-запросы, стриминг ответов агента\n[HTTPS/JSON, WSS, TCP 443]
+
+' № инт. 19
+payment_gateway --> api_gateway : Статус платежа (webhook)\n[HTTPS/JSON, TCP 443]
+
+' № инт. 21
+api_gateway --> auth_service : Вход (OIDC), проверка токена и ролей\n[HTTP/OIDC, TCP 8081]
+
+' № инт. 22
+api_gateway --> core_api : Проксирует запросы базы знаний,\nпоиска, согласования, webhook\n[HTTP/JSON, TCP 8000]
+
+' № инт. 23
+api_gateway --> agent_service : Проксирует диалоги с агентом, стриминг\n[HTTP/JSON, WebSocket, TCP 8002]
+
+' № инт. 27
+auth_service --> database : Пользователи, роли, сессии\n(схема keycloak)\n[SQL/TCP, TCP 5432]
+
+' № инт. 28
+auth_service --> corporate_idp : Федерация пользователей и групп\n[LDAPS, TCP 636]
+
+' № инт. 29
+core_api --> database : Проекты, кейсы, документы, права,\nматериалы, подписки\n[SQL/TCP, TCP 5432]
+
+' № инт. 31
+core_api --> cache : Кэш результатов поиска\n[RESP/TCP, TCP 6379]
+
+' № инт. 32
+core_api --> object_storage : Выдаёт presigned URL\nна загрузку и скачивание\n[HTTPS (S3 API), TCP 9000]
+
+' № инт. 33
+core_api --> message_broker : document.uploaded, usage.event;\nполучает document.indexed, material.generated, report.ready\n[AMQP, TCP 5672]
+
+' № инт. 35
+core_api --> notification_gateway : Отправляет письма, сообщения и push\n[SMTP/TLS 465, HTTPS/REST]
+
+' № инт. 36
+core_api --> payment_gateway : Создаёт платёж за подписку\n[HTTPS/REST]
+
+' № инт. 43
+agent_service --> core_api : Ищет релевантные фрагменты\nс учётом прав (RAG)\n[HTTP/JSON, TCP 8000]
+
+' № инт. 45
+agent_service --> llm_server : Генерирует ответ\n[HTTP/JSON (OpenAI API), TCP 8100]
+
+' № инт. 46
+agent_service --> llm_provider : Генерация в облачном режиме\nи как резерв\n[HTTPS/REST]
+
+' № инт. 47
+agent_service --> cache : Контекст диалога\n[RESP/TCP, TCP 6379]
+
+' № инт. 48
+agent_service --> database : История диалогов, шаблоны промптов\n[SQL/TCP, TCP 5432]
+
+' № инт. 64
+monitoring --> api_gateway : Опрашивает метрики шлюза\n[HTTP GET /metrics]
+
+' № инт. 65
+monitoring --> core_api : Опрашивает метрики сервиса\n[HTTP GET /metrics]
+
+' № инт. 66
+monitoring --> agent_service : Опрашивает метрики агента\n[HTTP GET /metrics]
+
+' № инт. 67
+monitoring --> llm_server : Опрашивает метрики GPU\nи очереди запросов\n[HTTP GET /metrics]
+
+' № инт. 68
+monitoring --> database : Опрашивает метрики СУБД\n[HTTP GET /metrics]
+
+' № инт. 69
+monitoring --> notification_gateway : Отправляет оповещения об инцидентах\n[SMTP/TLS, TCP 465]
+
+@enduml
