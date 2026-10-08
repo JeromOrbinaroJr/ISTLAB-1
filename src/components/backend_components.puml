@@ -1,0 +1,100 @@
+@startuml backend_components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов — Сервис базы знаний (ядро) (локальное представление: Backend)
+
+' === ВЫЗЫВАЮЩИЕ КОНТЕЙНЕРЫ (ID из L2) ===
+Container(api_gateway, "API-шлюз", "Nginx 1.25", "Единая точка входа: TLS 1.3, маршрутизация, проверка токена, приём webhook")
+Container(agent_service, "ИИ-агент", "Python 3.12 / FastAPI, LangGraph", "Оркестрация RAG, запрашивает фрагменты документов")
+
+Container_Boundary(core_api, "Сервис базы знаний (ядро)") {
+
+    ' --- Слой представления ---
+    Component(kb_api_comp, "API-маршрутизатор", "FastAPI Routers, Pydantic v2", "REST-эндпоинты базы знаний, поиска, согласования и подписок; поиск фрагментов для ИИ-агента; приём webhook CRM и ЮKassa")
+
+    ' --- Сквозной модуль безопасности ---
+    Component(auth_comp, "Модуль авторизации", "Python, PyJWT", "Проверяет JWT по публичному ключу Keycloak, собирает UserContext и фильтр прав по группам")
+
+    ' --- Прикладной слой ---
+    Component(kb_comp, "Сервис базы знаний", "Python module", "Проекты, продукты, кейсы, документы и версии, согласование, черновики кейсов из CRM")
+    Component(search_comp, "Сервис гибридного поиска", "Python module", "Полнотекстовый и семантический поиск, слияние результатов, учёт прав")
+    Component(billing_comp, "Модуль подписок", "Python module", "Создание платежа, идемпотентная обработка webhook, состояние подписки")
+
+    ' --- Инфраструктурный слой ---
+    Component(kb_repo_comp, "Репозиторий данных", "SQLAlchemy 2.0 (async)", "Доступ к PostgreSQL (схема kb), полнотекстовый поиск через tsvector")
+    Component(index_comp, "Клиент векторного индекса и кэша", "qdrant-client, FastEmbed (bge-m3), redis-py", "Векторизует запрос той же моделью bge-m3, ищет в Qdrant с фильтром по группам, кэширует результаты")
+    Component(storage_comp, "Клиент объектного хранилища", "aioboto3 (S3 API)", "Presigned URL на загрузку и скачивание документов")
+    Component(event_comp, "Шина событий", "aio-pika", "Публикует и принимает события RabbitMQ, вызывает обработчики")
+    Component(integration_comp, "Модуль внешних интеграций", "httpx, aiosmtplib", "Адаптеры CRM, сервисов уведомлений и ЮKassa: повторные попытки, журнал обмена")
+}
+
+' === ХРАНИЛИЩА И ИНФРАСТРУКТУРА (ID из L2) ===
+ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Проекты, кейсы, метаданные документов, права, подписки")
+ContainerDb(vector_db, "Векторная БД", "Qdrant 1.x", "Эмбеддинги фрагментов с метаданными прав")
+ContainerDb(cache, "Кэш и сессии", "Redis 7", "Кэш результатов поиска")
+ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Оригиналы документов")
+ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13 (AMQP)", "События document.*, usage.event, material.generated, report.ready")
+
+' === ВНЕШНИЕ СИСТЕМЫ (ID из L2) ===
+System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP, мессенджер, FCM / APNs")
+System_Ext(payment_gateway, "Платёжный шлюз", "ЮKassa")
+
+' === ВХОДЯЩИЕ СВЯЗИ (проброс связей L2) ===
+' № инт. 22
+Rel(api_gateway, kb_api_comp, "Проксирует запросы базы знаний, поиска, согласования, webhook", "HTTP/JSON, TCP 8000")
+' № инт. 43
+Rel(agent_service, kb_api_comp, "Ищет релевантные фрагменты с учётом прав (RAG)", "HTTP/JSON, TCP 8000")
+
+' === ВНУТРЕННИЕ СВЯЗИ: ПРЕДСТАВЛЕНИЕ -> ПРИКЛАДНОЙ СЛОЙ ===
+' внутр.
+Rel(kb_api_comp, auth_comp, "Проверяет токен, получает UserContext", "Python Call")
+' внутр.
+Rel(kb_api_comp, kb_comp, "Передаёт операции с карточками, документами и согласованием", "Python Call")
+' внутр.
+Rel(kb_api_comp, search_comp, "Передаёт поисковый запрос с UserContext", "Python Call")
+' внутр.
+Rel(kb_api_comp, billing_comp, "Передаёт создание платежа и webhook ЮKassa", "Python Call")
+
+' === ВНУТРЕННИЕ СВЯЗИ: ПРИКЛАДНОЙ -> ИНФРАСТРУКТУРНЫЙ СЛОЙ ===
+' внутр.
+Rel(kb_comp, kb_repo_comp, "Читает и записывает проекты, кейсы, документы", "Python Call")
+' внутр.
+Rel(kb_comp, storage_comp, "Запрашивает presigned URL", "Python Call")
+' внутр.
+Rel(kb_comp, event_comp, "Публикует document.uploaded", "Python Call")
+' внутр.
+Rel(kb_comp, integration_comp, "Запрашивает сделку, прикрепляет КП, отправляет уведомление", "Python Call")
+' внутр.
+Rel(search_comp, kb_repo_comp, "Выполняет полнотекстовый поиск", "Python Call")
+' внутр.
+Rel(search_comp, index_comp, "Выполняет семантический поиск с фильтром прав", "Python Call")
+' внутр.
+Rel(search_comp, event_comp, "Публикует usage.event", "Python Call")
+' внутр.
+Rel(billing_comp, kb_repo_comp, "Сохраняет состояние подписки, проверяет повтор платежа", "Python Call")
+' внутр.
+Rel(billing_comp, integration_comp, "Создаёт платёж в ЮKassa", "Python Call")
+' внутр.
+Rel(event_comp, kb_comp, "Вызывает обработчики document.indexed, material.generated, report.ready", "Python Call")
+
+' === ИСХОДЯЩИЕ СВЯЗИ (проброс связей L2) ===
+' № инт. 29
+Rel(kb_repo_comp, database, "Читает и записывает проекты, кейсы, документы, права, подписки", "SQL/TCP, TCP 5432")
+' № инт. 30
+Rel(index_comp, vector_db, "Выполняет семантический поиск с фильтром прав", "gRPC, TCP 6334")
+' № инт. 31
+Rel(index_comp, cache, "Кэширует результаты поиска", "RESP/TCP, TCP 6379")
+' № инт. 32
+Rel(storage_comp, object_storage, "Выдаёт presigned URL на загрузку и скачивание", "HTTPS (S3 API), TCP 9000")
+' № инт. 33
+Rel(event_comp, message_broker, "Публикует document.uploaded, usage.event; получает document.indexed, material.generated, report.ready", "AMQP, TCP 5672")
+' № инт. 34
+Rel(integration_comp, crm_system, "Запрашивает сделки и кейсы, прикрепляет КП к сделке", "HTTPS/REST")
+' № инт. 35
+Rel(integration_comp, notification_gateway, "Отправляет письма, сообщения и push", "SMTP/TLS 465, HTTPS/REST")
+' № инт. 36
+Rel(integration_comp, payment_gateway, "Создаёт платёж за подписку", "HTTPS/REST")
+
+@enduml
