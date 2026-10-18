@@ -1,0 +1,123 @@
+@startuml vibecoder_classes
+title Диаграмма классов (L4) — llm_comp: Шлюз языковых моделей (паттерн «Стратегия»)
+
+package "llm_comp (agent_service)" {
+
+    class LLMGateway {
+        - _strategy: LLMStrategy
+        - _max_tokens_limit: int
+        + __init__(strategy: LLMStrategy, max_tokens_limit: int = 4096)
+        + strategy_name: str {readOnly}
+        + set_strategy(strategy: LLMStrategy): None
+        + generate(messages: list[ChatMessage], params: GenerationParams): Completion
+        + stream(messages: list[ChatMessage], params: GenerationParams): Iterator[str]
+        - _validate(messages: list[ChatMessage], params: GenerationParams): None
+    }
+
+    interface LLMStrategy <<interface>> {
+        + {abstract} name: str {readOnly}
+        + {abstract} generate(messages: list[ChatMessage], params: GenerationParams): Completion
+        + {abstract} stream(messages: list[ChatMessage], params: GenerationParams): Iterator[str]
+    }
+
+    class LocalLLMStrategy {
+        - _client: ChatClient
+        - _model: str
+        + __init__(client: ChatClient, model: str)
+        + name: str {readOnly}
+        + generate(messages: list[ChatMessage], params: GenerationParams): Completion
+        + stream(messages: list[ChatMessage], params: GenerationParams): Iterator[str]
+    }
+
+    class CloudLLMStrategy {
+        - _client: ChatClient
+        - _model: str
+        + __init__(client: ChatClient, model: str)
+        + name: str {readOnly}
+        + generate(messages: list[ChatMessage], params: GenerationParams): Completion
+        + stream(messages: list[ChatMessage], params: GenerationParams): Iterator[str]
+    }
+
+    class FallbackStrategy {
+        - _primary: LLMStrategy
+        - _secondary: LLMStrategy
+        + __init__(primary: LLMStrategy, secondary: LLMStrategy)
+        + name: str {readOnly}
+        + generate(messages: list[ChatMessage], params: GenerationParams): Completion
+        + stream(messages: list[ChatMessage], params: GenerationParams): Iterator[str]
+    }
+
+    class StrategyFactory {
+        + {static} for_mode(mode: DeploymentMode, local_client: ChatClient, cloud_client: ChatClient | None = None, local_model: str = "qwen2.5-7b-instruct", cloud_model: str = "GigaChat-Pro"): LLMStrategy
+    }
+
+    enum DeploymentMode {
+        CLOSED_CONTOUR
+        SAAS
+    }
+
+    class ChatMessage <<dataclass(frozen)>> {
+        + role: Literal["system", "user", "assistant"]
+        + content: str
+    }
+
+    class GenerationParams <<dataclass(frozen)>> {
+        + temperature: float = 0.2
+        + max_tokens: int = 1024
+    }
+
+    class Completion <<dataclass(frozen)>> {
+        + text: str
+        + model: str
+        + provider: str
+        + latency_ms: int
+    }
+
+    class LLMUnavailableError <<exception>> {
+        + provider: str
+        + __init__(provider: str, reason: str)
+    }
+}
+
+package "Порты: реализуют клиенты llm_server (№45) и llm_provider (№46)" {
+    interface ChatClient <<Protocol>> {
+        + provider: str {readOnly}
+        + complete(model: str, messages: list[ChatMessage], params: GenerationParams): str
+        + stream(model: str, messages: list[ChatMessage], params: GenerationParams): Iterator[str]
+    }
+}
+
+package "prototype_adapters (прототип без сети)" {
+    class FakeChatClient {
+        - _provider: str
+        - _available: bool
+        - _fail_after_tokens: int | None
+        + __init__(provider: str, available: bool = True, fail_after_tokens: int | None = None)
+        + provider: str {readOnly}
+        + set_available(available: bool): None
+        + complete(model: str, messages: list[ChatMessage], params: GenerationParams): str
+        + stream(model: str, messages: list[ChatMessage], params: GenerationParams): Iterator[str]
+    }
+}
+
+LLMGateway "1" *-- "1" LLMStrategy : использует >
+
+LLMStrategy <|.. LocalLLMStrategy
+LLMStrategy <|.. CloudLLMStrategy
+LLMStrategy <|.. FallbackStrategy
+
+FallbackStrategy "1" o-- "2" LLMStrategy : primary / secondary >
+LocalLLMStrategy "1" o-- "1" ChatClient : клиент llm_server >
+CloudLLMStrategy "1" o-- "1" ChatClient : клиент llm_provider >
+
+ChatClient <|.. FakeChatClient
+
+StrategyFactory ..> LLMStrategy : создаёт
+StrategyFactory ..> DeploymentMode : использует
+LLMGateway ..> ChatMessage : принимает
+LLMGateway ..> GenerationParams : принимает
+LLMStrategy ..> Completion : возвращает
+LLMStrategy ..> LLMUnavailableError : выбрасывает
+FakeChatClient ..> LLMUnavailableError : выбрасывает
+
+@enduml
