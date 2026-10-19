@@ -1,0 +1,69 @@
+@startuml analyst_components
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма компонентов — Сервис аналитики и инсайтов (локальное представление: Аналитик)
+
+' === СОСЕДНИЕ КОНТЕЙНЕРЫ (ID из L2) ===
+Container(api_gateway, "API-шлюз", "Nginx 1.25", "Единая точка входа: TLS 1.3, маршрутизация, проверка токена, rate limit")
+Container(agent_service, "ИИ-агент", "Python 3.12 / FastAPI, LangGraph", "Оркестрация RAG; запрашивает рыночные показатели как инструмент")
+ContainerDb(dwh, "Аналитическое хранилище", "ClickHouse 24", "Витрины: рыночные показатели, использование базы знаний, эффективность материалов")
+ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Файлы отчётов и дайджестов")
+ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13 (AMQP)", "События между сервисами")
+
+Container_Boundary(analytics_service, "Сервис аналитики и инсайтов") {
+  ' --- Слой представления ---
+  Component(analytics_api_comp, "API аналитики", "FastAPI Routers, Pydantic v2", "Эндпоинты дашбордов и отчётов для клиентов, рыночных индикаторов для ИИ-агента")
+
+  ' --- Прикладной слой ---
+  Component(metrics_comp, "Сервис показателей", "pandas", "KPI использования базы знаний и эффективности материалов: поиски, скачивания, время подготовки материала")
+  Component(benchmark_comp, "Сервис сопоставления с рынком", "pandas", "Сравнение проектов и кейсов компании с рыночными индикаторами по отрасли и периоду")
+  Component(report_comp, "Сервис отчётов и дайджестов", "Python, Jinja2, APScheduler", "Регламентные отчёты и еженедельный рыночный дайджест по расписанию")
+  Component(export_comp, "Модуль экспорта", "openpyxl, WeasyPrint", "Выгрузка отчёта в XLSX, PDF или CSV")
+
+  ' --- Инфраструктурный слой ---
+  Component(dwh_repo_comp, "Репозиторий витрин", "clickhouse-connect", "Параметризованные запросы к витринам ClickHouse")
+  Component(an_storage_comp, "Клиент хранилища отчётов", "aioboto3 (S3 API)", "Сохраняет готовые файлы отчётов и выдаёт ссылки")
+  Component(an_event_comp, "Публикатор событий", "aio-pika", "Публикует report.ready")
+}
+
+' === ВХОДЯЩИЕ СВЯЗИ (проброс связей L2) ===
+' № инт. 25
+Rel(api_gateway, analytics_api_comp, "Проксирует запросы дашбордов и отчётов", "HTTP/JSON, TCP 8004")
+' № инт. 44
+Rel(agent_service, analytics_api_comp, "Запрашивает рыночные показатели (инструмент агента)", "HTTP/JSON, TCP 8004")
+
+' === ВНУТРЕННИЕ СВЯЗИ: представление -> прикладной слой ===
+' внутр.
+Rel(analytics_api_comp, metrics_comp, "Запрашивает показатели для дашборда", "Python Call")
+' внутр.
+Rel(analytics_api_comp, benchmark_comp, "Запрашивает рыночные индикаторы и сопоставление", "Python Call")
+' внутр.
+Rel(analytics_api_comp, report_comp, "Запускает формирование отчёта по запросу", "Python Call")
+
+' === ВНУТРЕННИЕ СВЯЗИ: внутри прикладного слоя ===
+' внутр.
+Rel(report_comp, metrics_comp, "Получает показатели за период", "Python Call")
+' внутр.
+Rel(report_comp, benchmark_comp, "Получает рыночные данные для дайджеста", "Python Call")
+' внутр.
+Rel(report_comp, export_comp, "Формирует файл нужного формата", "Python Call")
+
+' === ВНУТРЕННИЕ СВЯЗИ: прикладной слой -> инфраструктура ===
+' внутр.
+Rel(metrics_comp, dwh_repo_comp, "Читает витрины использования и эффективности", "Python Call")
+' внутр.
+Rel(benchmark_comp, dwh_repo_comp, "Читает рыночные витрины", "Python Call")
+' внутр.
+Rel(report_comp, an_storage_comp, "Сохраняет файл отчёта", "Python Call")
+' внутр.
+Rel(report_comp, an_event_comp, "Сообщает о готовности отчёта", "Python Call")
+
+' === ИСХОДЯЩИЕ СВЯЗИ (проброс связей L2) ===
+' № инт. 61
+Rel(dwh_repo_comp, dwh, "Аналитические запросы к витринам", "HTTP, TCP 8123")
+' № инт. 62
+Rel(an_storage_comp, object_storage, "Сохраняет файлы отчётов", "HTTPS (S3 API), TCP 9000")
+' № инт. 63
+Rel(an_event_comp, message_broker, "Публикует report.ready", "AMQP, TCP 5672")
+@enduml
