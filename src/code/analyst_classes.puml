@@ -1,0 +1,140 @@
+@startuml analyst_classes
+title Диаграмма классов (L4) — export_comp: Модуль экспорта (паттерн «Стратегия»)
+
+package "export_comp (analytics_service)" {
+
+  class ExportService {
+    - _strategies: dict[ExportFormat, ExportStrategy]
+    - _strategy: ExportStrategy
+    + __init__(strategies: Iterable[ExportStrategy], default: ExportFormat = ExportFormat.PDF)
+    + current_format: ExportFormat {readOnly}
+    + set_strategy(strategy: ExportStrategy): None
+    + export(document: ReportDocument, fmt: ExportFormat): bytes
+    + content_type(fmt: ExportFormat): str
+    + filename(document: ReportDocument, fmt: ExportFormat): str
+    - _select(fmt: ExportFormat): ExportStrategy
+    - _validate(document: ReportDocument): None
+  }
+
+  interface ExportStrategy <<interface>> {
+    + format: ExportFormat
+    + media_type: str
+    + extension: str
+    + render(document: ReportDocument): bytes
+  }
+
+  class CsvExportStrategy {
+    + format: ExportFormat
+    + media_type: str
+    + extension: str
+    + render(document: ReportDocument): bytes
+  }
+
+  class XlsxExportStrategy {
+    - {static} _ZIP_DATE: tuple[int, int, int, int, int, int]
+    + format: ExportFormat
+    + media_type: str
+    + extension: str
+    + render(document: ReportDocument): bytes
+    - _sheet_xml(table: ReportTable): str
+  }
+
+  class PdfExportStrategy {
+    - _renderer: PdfRenderer
+    + __init__(renderer: PdfRenderer)
+    + format: ExportFormat
+    + media_type: str
+    + extension: str
+    + render(document: ReportDocument): bytes
+    - _to_html(document: ReportDocument): str
+  }
+
+  enum ExportFormat {
+    CSV
+    XLSX
+    PDF
+  }
+
+  class ReportDocument <<dataclass(frozen)>> {
+    + title: str
+    + period: Period
+    + kpis: tuple[KpiValue, ...]
+    + indicators: tuple[MarketIndicator, ...]
+    + benchmark: tuple[BenchmarkRow, ...]
+    + tables(): tuple[ReportTable, ...]
+  }
+
+  class Period <<dataclass(frozen)>> {
+    + date_from: date
+    + date_to: date
+    + label(): str
+  }
+
+  class KpiValue <<dataclass(frozen)>> {
+    + kpi: str
+    + value: float
+    + unit: str
+    + period: Period
+    + dimension: str | None
+  }
+
+  class BenchmarkRow <<dataclass(frozen)>> {
+    + project_id: UUID
+    + project_title: str
+    + industry: str
+    + metric: str
+    + company_value: float
+    + market_value: float
+    + delta_pct: float
+  }
+
+  class ReportTable <<dataclass(frozen)>> {
+    + title: str
+    + columns: tuple[str, ...]
+    + rows: tuple[tuple[str | int | float, ...], ...]
+  }
+
+  class ReportValidationError {
+  }
+}
+
+package "Порт: движок PDF (WeasyPrint в сервисе)" {
+  interface PdfRenderer <<Protocol>> {
+    + render(html: str): bytes
+  }
+}
+
+package "shared: общие модели команды (dto.py)" as shared_pkg {
+  class MarketIndicator <<dataclass(frozen)>> {
+    + metric: str
+    + value: float
+    + unit: str
+    + period: str
+    + source: str
+    + source_url: str
+  }
+}
+
+' --- Паттерн «Стратегия» ---
+ExportService "1" *-- "1" ExportStrategy : использует >
+ExportService "1" o-- "1..*" ExportStrategy : доступные форматы >
+ExportStrategy <|.. CsvExportStrategy
+ExportStrategy <|.. XlsxExportStrategy
+ExportStrategy <|.. PdfExportStrategy
+
+' --- Внедрённая зависимость ---
+PdfExportStrategy o-- PdfRenderer : движок PDF >
+
+' --- Зависимости ---
+ExportService ..> ReportValidationError : выбрасывает >
+ExportService ..> ReportDocument : проверяет >
+ExportStrategy ..> ReportDocument : читает >
+ExportStrategy ..> ExportFormat
+ReportDocument ..> ReportTable : создаёт >
+
+' --- Состав отчёта ---
+ReportDocument *-- Period
+ReportDocument *-- "0..*" KpiValue
+ReportDocument *-- "0..*" MarketIndicator
+ReportDocument *-- "0..*" BenchmarkRow
+@enduml
