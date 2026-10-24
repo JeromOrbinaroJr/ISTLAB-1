@@ -1,0 +1,136 @@
+@startuml backend_classes
+title Диаграмма классов (L4) — search_comp: сервис гибридного поиска (паттерн «Стратегия»)
+
+package "search_comp (core_api)" {
+
+  class SearchService {
+    - _strategy: SearchStrategy
+    - _cache: SearchCache
+    - _usage: UsagePublisher
+    - _cache_ttl: int
+    + __init__(strategy: SearchStrategy, cache: SearchCache, usage: UsagePublisher, cache_ttl: int = 300)
+    + «property» strategy: SearchStrategy
+    + set_strategy(strategy: SearchStrategy): None
+    + search(query: str, user: UserContext, top_k: int = 8, filters: SearchFilters | None = None): list[FragmentHit]
+    - _cache_key(query: SearchQuery, access: AccessFilter): str
+    - _report(user: UserContext, query: SearchQuery, results: int, from_cache: bool): None
+  }
+
+  interface SearchStrategy <<interface>> {
+    + {abstract} «property» name: str
+    + {abstract} search(query: SearchQuery, access: AccessFilter): list[FragmentHit]
+  }
+
+  class FullTextStrategy {
+    - _source: FullTextSource
+    + «property» name: str = "fulltext"
+    + search(query: SearchQuery, access: AccessFilter): list[FragmentHit]
+  }
+
+  class SemanticStrategy {
+    - _source: SemanticSource
+    + «property» name: str = "semantic"
+    + search(query: SearchQuery, access: AccessFilter): list[FragmentHit]
+  }
+
+  class HybridRRFStrategy {
+    - _fulltext: FullTextSource
+    - _semantic: SemanticSource
+    - _k: int = 60
+    - _candidates_factor: int = 3
+    + «property» name: str = "hybrid_rrf"
+    + search(query: SearchQuery, access: AccessFilter): list[FragmentHit]
+    - _fuse(ranked_lists: list[list[FragmentHit]], top_k: int): list[FragmentHit]
+  }
+
+  class SearchQuery <<dataclass(frozen)>> {
+    + text: str
+    + top_k: int
+    + filters: SearchFilters
+    + __post_init__(): None
+  }
+
+  class AccessFilter <<dataclass(frozen)>> {
+    + groups: frozenset[str]
+    + {static} from_user(user: UserContext): AccessFilter
+    + cache_part(): str
+  }
+
+  class UsageEvent <<dataclass(frozen)>> {
+    + user_id: UUID
+    + strategy: str
+    + query_length: int
+    + results: int
+    + from_cache: bool
+    + occurred_at: datetime
+  }
+
+  class InvalidQueryError <<exception>> {
+  }
+}
+
+package "Порты: реализуют kb_repo_comp, index_comp, event_comp" {
+  interface FullTextSource <<Protocol>> {
+    + fulltext_search(query: SearchQuery, access: AccessFilter, limit: int): list[FragmentHit]
+  }
+  interface SemanticSource <<Protocol>> {
+    + semantic_search(query: SearchQuery, access: AccessFilter, limit: int): list[FragmentHit]
+  }
+  interface SearchCache <<Protocol>> {
+    + get(key: str): list[FragmentHit] | None
+    + set(key: str, hits: list[FragmentHit], ttl: int): None
+  }
+  interface UsagePublisher <<Protocol>> {
+    + publish(event: UsageEvent): None
+  }
+}
+
+package "shared: общие модели команды (dto.py)" {
+  class UserContext <<dataclass(frozen)>> {
+    + user_id: UUID
+    + roles: tuple[str, ...]
+    + groups: tuple[str, ...]
+  }
+  class FragmentHit <<dataclass(frozen)>> {
+    + fragment_id: UUID
+    + document_id: UUID
+    + title: str
+    + text: str
+    + score: float
+    + source_url: str
+    + updated_at: datetime
+    + to_source_ref(): SourceRef
+  }
+  class SearchFilters <<dataclass(frozen)>> {
+    + project_ids: tuple[UUID, ...]
+    + doc_types: tuple[str, ...]
+    + date_from: date | None
+  }
+}
+
+' --- Паттерн «Стратегия»: контекст содержит ровно одну стратегию ---
+SearchService "1" *-- "1" SearchStrategy : использует >
+
+' --- Реализация интерфейса конкретными стратегиями ---
+SearchStrategy <|.. FullTextStrategy
+SearchStrategy <|.. SemanticStrategy
+SearchStrategy <|.. HybridRRFStrategy
+
+' --- Внедрённые зависимости (агрегация: объекты живут вне контекста) ---
+SearchService o-- "1" SearchCache
+SearchService o-- "1" UsagePublisher
+FullTextStrategy o-- "1" FullTextSource
+SemanticStrategy o-- "1" SemanticSource
+HybridRRFStrategy o-- "1" FullTextSource
+HybridRRFStrategy o-- "1" SemanticSource
+
+' --- Зависимости (создаёт / использует) ---
+SearchService ..> SearchQuery : создаёт
+SearchService ..> AccessFilter : создаёт
+SearchService ..> UsageEvent : создаёт
+SearchQuery --> "1" SearchFilters
+SearchQuery ..> InvalidQueryError : выбрасывает
+AccessFilter ..> UserContext : строится из
+SearchStrategy ..> FragmentHit : возвращает
+
+@enduml
