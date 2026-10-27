@@ -1,0 +1,97 @@
+@startuml backend_deployment
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма развёртывания — сегмент Backend (ядро базы знаний, авторизация, обработка документов)
+
+Deployment_Node(employee_pc, "Рабочее место сотрудника", "Windows / macOS, браузер") {
+    Container(web_app, "Веб-приложение", "React 18 / TypeScript (SPA)", "Интерфейс базы знаний и поиска")
+}
+
+Deployment_Node(datacenter, "ЦОД заказчика / облако", "Yandex Cloud VPC или закрытый контур") {
+
+    Deployment_Node(dmz_node, "Пограничный сервер (DMZ)", "Ubuntu 22.04 VM, публичный IP") {
+        Container(api_gateway, "API-шлюз", "Nginx 1.25", "TLS 1.3, балансировка round robin, health checks")
+    }
+
+    Deployment_Node(app_node_1, "Сервер приложений №1", "Ubuntu 22.04, Docker 26") {
+        Container(core_api_1, "Сервис базы знаний (экз. 1)", "Python 3.12 / FastAPI", "Ядро: знания, поиск, права, интеграции")
+        Container(auth_service_1, "Сервис авторизации (экз. 1)", "Keycloak 24, кластер", "SSO, OIDC, федерация с AD")
+    }
+
+    Deployment_Node(app_node_2, "Сервер приложений №2", "Ubuntu 22.04, Docker 26") {
+        Container(core_api_2, "Сервис базы знаний (экз. 2)", "Python 3.12 / FastAPI", "Те же связи, что у экземпляра 1")
+        Container(auth_service_2, "Сервис авторизации (экз. 2)", "Keycloak 24, кластер", "Общая БД с экземпляром 1")
+    }
+
+    Deployment_Node(worker_node, "Сервер фоновых обработчиков", "Ubuntu 22.04, Docker 26") {
+        Container(ingestion_service, "Сервис обработки документов", "Python 3.12 / Celery, Docling, Tesseract", "Разбор, OCR, эмбеддинги, индексация")
+    }
+
+    Deployment_Node(gpu_node, "GPU-сервер", "Ubuntu 22.04, NVIDIA L40S, CUDA 12") {
+        Container(llm_server, "Локальный LLM-сервер", "vLLM + bge-m3", "Эмбеддинги и генерация внутри контура")
+    }
+
+    Deployment_Node(data_node, "Сервер хранилищ", "Ubuntu 22.04, Docker 26, SSD") {
+        ContainerDb(vector_db, "Векторная БД", "Qdrant 1.x", "Снапшоты раз в сутки")
+        ContainerDb(cache, "Кэш и сессии", "Redis 7", "Кэш поиска")
+        ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13", "Обмен kb.events, очереди Celery")
+        ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Оригиналы документов")
+    }
+
+    Deployment_Node(db_primary, "Сервер БД (Мастер)", "Ubuntu 22.04, PostgreSQL 16") {
+        ContainerDb(database, "Реляционная СУБД (мастер)", "PostgreSQL 16", "Запись и чтение")
+    }
+
+    Deployment_Node(db_replica, "Сервер БД (Реплика)", "Ubuntu 22.04, PostgreSQL 16") {
+        ContainerDb(database_replica, "Реляционная СУБД (реплика)", "PostgreSQL 16", "Горячий резерв, чтение тяжёлых выборок")
+    }
+}
+
+Deployment_Node(corporate_net, "Корпоративная сеть заказчика", "LAN / VPN") {
+    System_Ext(corporate_idp, "Корпоративный каталог (IAM)", "Active Directory / FreeIPA")
+    System_Ext(doc_sources, "Хранилища документов", "SMB, Nextcloud, Confluence")
+    System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM")
+}
+
+System_Ext(payment_gateway, "Платёжный шлюз ЮKassa", "Внешняя финансовая система")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP, Telegram, FCM / APNs")
+
+' === Вход: только 443 ===
+Rel(web_app, api_gateway, "Запросы к API, стриминг ответов", "HTTPS / TLS 1.3, WSS, TCP 443")
+Rel(crm_system, api_gateway, "Webhook о закрытии сделки", "HTTPS / TLS 1.3, TCP 443")
+Rel(payment_gateway, api_gateway, "Webhook о статусе платежа", "HTTPS / TLS 1.3, TCP 443")
+
+' === Балансировка между экземплярами ===
+Rel(api_gateway, core_api_1, "Проксирует запросы (round robin)", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, core_api_2, "Проксирует запросы (round robin)", "HTTP/JSON, TCP 8000")
+Rel(api_gateway, auth_service_1, "Вход и проверка токена", "HTTP / OIDC, TCP 8081")
+Rel(api_gateway, auth_service_2, "Вход и проверка токена", "HTTP / OIDC, TCP 8081")
+
+' === Сервис базы знаний (экземпляр 2 — аналогично) ===
+Rel(core_api_1, database, "Запись и чтение данных", "SQL/TCP, TCP 5432")
+Rel(core_api_1, database_replica, "Чтение для полнотекстового поиска", "SQL/TCP, TCP 5432, read-only")
+Rel(core_api_1, vector_db, "Семантический поиск", "gRPC, TCP 6334")
+Rel(core_api_1, cache, "Кэш поиска", "RESP/TCP, TCP 6379")
+Rel(core_api_1, object_storage, "Presigned URL, файлы", "HTTPS (S3 API), TCP 9000")
+Rel(core_api_1, message_broker, "События kb.events", "AMQP, TCP 5672")
+Rel(core_api_1, crm_system, "Сделки и кейсы, прикрепление КП", "HTTPS/REST, TCP 443")
+Rel(core_api_1, payment_gateway, "Создание платежа (через egress-прокси)", "HTTPS/REST, TLS 1.3, TCP 443")
+Rel(core_api_1, notification_gateway, "Письма, сообщения, push", "SMTP/TLS 465, HTTPS 443")
+
+' === Сервис авторизации (экземпляр 2 — аналогично) ===
+Rel(auth_service_1, corporate_idp, "Федерация пользователей и групп", "LDAPS, TCP 636")
+Rel(auth_service_1, database, "Схема keycloak", "SQL/TCP, TCP 5432")
+
+' === Обработка документов ===
+Rel(ingestion_service, doc_sources, "Синхронизация документов", "SMB 3, TCP 445 / HTTPS 443")
+Rel(ingestion_service, message_broker, "document.uploaded / document.indexed", "AMQP, TCP 5672")
+Rel(ingestion_service, object_storage, "Оригиналы и извлечённый текст", "HTTPS (S3 API), TCP 9000")
+Rel(ingestion_service, llm_server, "Эмбеддинги фрагментов", "HTTP/JSON, TCP 8100")
+Rel(ingestion_service, vector_db, "Запись векторов", "gRPC, TCP 6334")
+Rel(ingestion_service, database, "Статус индексации", "SQL/TCP, TCP 5432")
+
+' === Отказоустойчивость данных ===
+Rel(database, database_replica, "Потоковая репликация WAL", "PostgreSQL streaming replication, TCP 5432")
+
+@enduml

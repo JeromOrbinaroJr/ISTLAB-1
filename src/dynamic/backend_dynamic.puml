@@ -1,0 +1,37 @@
+@startuml backend_dynamic
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+LAYOUT_WITH_LEGEND()
+
+title Динамическая диаграмма — Поиск фрагментов документов для ИИ-агента (локальное представление: Backend)
+
+Container(agent_service, "ИИ-агент", "Python 3.12 / FastAPI, LangGraph", "Запрашивает фрагменты документов для ответа (RAG)")
+
+Container_Boundary(core_api, "Сервис базы знаний (ядро)") {
+    Component(kb_api_comp, "API-маршрутизатор", "FastAPI Routers", "Принимает запрос поиска фрагментов")
+    Component(auth_comp, "Модуль авторизации", "PyJWT", "Проверяет токен, возвращает UserContext")
+    Component(search_comp, "Сервис гибридного поиска", "Python module, паттерн «Стратегия»", "HybridRRFStrategy: полнотекстовый + семантический поиск")
+    Component(index_comp, "Клиент векторного индекса и кэша", "qdrant-client, FastEmbed, redis-py", "Кэш результатов и семантический поиск")
+    Component(kb_repo_comp, "Репозиторий данных", "SQLAlchemy 2.0", "Полнотекстовый поиск в PostgreSQL")
+    Component(event_comp, "Шина событий", "aio-pika", "Публикует usage.event")
+}
+
+ContainerDb(cache, "Кэш и сессии", "Redis 7", "Кэш результатов поиска")
+ContainerDb(database, "Реляционная СУБД", "PostgreSQL 16", "Фрагменты, индекс tsvector, права")
+ContainerDb(vector_db, "Векторная БД", "Qdrant 1.x", "Векторы фрагментов с группами доступа")
+ContainerQueue(message_broker, "Брокер сообщений", "RabbitMQ 3.13", "Обмен kb.events")
+
+Rel(agent_service, kb_api_comp, "1. POST /api/v1/search/fragments {query, top_k=8, filters} + Bearer JWT пользователя", "HTTP/JSON, TCP 8000")
+Rel(kb_api_comp, auth_comp, "2. AuthService.authenticate(token) -> UserContext", "Python Call")
+Rel(kb_api_comp, search_comp, "3. SearchService.search(query, user, top_k, filters)", "Python Call")
+Rel(search_comp, index_comp, "4. SearchCache.get(key) — промах", "Python Call")
+Rel(index_comp, cache, "5. GET search:<sha256>", "RESP/TCP, TCP 6379")
+Rel(search_comp, kb_repo_comp, "6. fulltext_search(query, access, limit=24)", "Python Call")
+Rel(kb_repo_comp, database, "7. SELECT ... WHERE tsv @@ plainto_tsquery(...) AND groups && :groups", "SQL/TCP, TCP 5432")
+Rel(search_comp, index_comp, "8. semantic_search(query, access, limit=24)", "Python Call")
+Rel(index_comp, vector_db, "9. Search(vector = bge-m3(query), filter = groups)", "gRPC, TCP 6334")
+Rel(search_comp, index_comp, "10. SearchCache.set(key, hits, ttl=300) после слияния RRF", "Python Call")
+Rel(index_comp, cache, "11. SET search:<sha256> EX 300", "RESP/TCP, TCP 6379")
+Rel(search_comp, event_comp, "12. EventBus.publish(UsageEvent)", "Python Call")
+Rel(event_comp, message_broker, "13. basic_publish(exchange=kb.events, routing_key=usage.event)", "AMQP, TCP 5672")
+
+@enduml

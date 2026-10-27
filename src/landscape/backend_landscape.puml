@@ -1,0 +1,40 @@
+@startuml backend_landscape
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма системного ландшафта (Level 0) — ИИ-платформа в ИТ-инфраструктуре компании (локальное представление: Backend)
+
+' === ЛЮДИ (ID из L1) ===
+Person(kb_editor, "Контент-менеджер базы знаний", "Загружает документы, ведёт карточки проектов и кейсов")
+Person(marketer, "Маркетолог", "Ищет документы и кейсы, готовит материалы")
+Person(platform_admin, "Администратор платформы", "Настраивает роли, права и коннекторы")
+
+Enterprise_Boundary(customer_it, "ИТ-инфраструктура компании-заказчика") {
+    System(kb_platform, "ИИ-платформа базы знаний и маркетинга", "Проектируемая система: база знаний, гибридный поиск с учётом прав, интеграции, ИИ-агент и генерация материалов")
+    System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM: клиенты, сделки, кейсы внедрения")
+    System_Ext(corporate_idp, "Корпоративный каталог пользователей (IAM)", "Active Directory / FreeIPA: учётные записи и группы сотрудников")
+    System_Ext(doc_sources, "Корпоративные хранилища документов", "Файловые серверы (SMB), Nextcloud, Confluence")
+}
+
+' === ЗА ГРАНИЦЕЙ КОМПАНИИ ===
+System_Ext(payment_gateway, "Платёжный шлюз ЮKassa", "Внешняя финансовая система: оплата SaaS-подписки")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер, Telegram Bot API, FCM / APNs")
+
+' === ЛЮДИ -> СИСТЕМА ===
+Rel(kb_editor, kb_platform, "Загружает документы, ведёт карточки и подтверждает актуальность", "HTTPS/JSON")
+Rel(marketer, kb_platform, "Ищет документы и кейсы, общается с ИИ-агентом", "HTTPS/JSON, WSS")
+Rel(platform_admin, kb_platform, "Настраивает роли, права доступа и коннекторы", "HTTPS")
+
+' === КОРПОРАТИВНЫЕ СИСТЕМЫ (внутри границы) ===
+Rel(kb_platform, corporate_idp, "Проверяет учётные данные, синхронизирует группы (SSO через Keycloak)", "LDAPS, TCP 636 / OIDC (OAuth2)")
+Rel(kb_platform, crm_system, "Запрашивает сделки и кейсы, прикрепляет КП к сделке", "HTTPS/REST")
+Rel(crm_system, kb_platform, "Сообщает о закрытии сделки (webhook)", "HTTPS/JSON")
+Rel(kb_platform, doc_sources, "Синхронизирует документы по расписанию", "SMB 3 / WebDAV (HTTPS), REST")
+
+' === ВНЕШНИЕ СИСТЕМЫ (за границей) ===
+Rel(kb_platform, payment_gateway, "Создаёт платёж за подписку", "HTTPS/REST")
+Rel(payment_gateway, kb_platform, "Сообщает статус платежа (webhook)", "HTTPS/JSON")
+Rel(kb_platform, notification_gateway, "Передаёт письма и сообщения: документ проиндексирован, документ устарел", "SMTP/TLS 465, HTTPS/REST")
+Rel(notification_gateway, kb_editor, "Доставляет напоминание актуализировать документ", "E-mail (SMTP)")
+
+@enduml
