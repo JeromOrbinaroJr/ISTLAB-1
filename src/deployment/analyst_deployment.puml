@@ -1,0 +1,73 @@
+@startuml analyst_deployment
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Диаграмма развёртывания (Level 2) — контур данных, локальный сегмент: Аналитик
+
+Deployment_Node(datacenter, "ЦОД заказчика / облако", "Yandex Cloud VPC или закрытый контур") {
+
+    Deployment_Node(dmz_node, "Пограничный сервер (DMZ)", "Ubuntu 22.04 VM, публичный IP", "Сетевая зона: DMZ") {
+        Container(api_gateway, "API-шлюз", "Nginx 1.25, TLS 1.3", "Единая точка входа, балансировка round robin с health checks")
+    }
+
+    Deployment_Node(app_node_1, "Сервер приложений 1", "Ubuntu 22.04, Docker 26", "Сетевая зона: подсеть приложений") {
+        Container(analytics_service_1, "Сервис аналитики и инсайтов (экземпляр 1)", "Python 3.12 / FastAPI, pandas", "Показатели, сопоставление с рынком, отчёты и дайджесты")
+    }
+
+    Deployment_Node(app_node_2, "Сервер приложений 2", "Ubuntu 22.04, Docker 26", "Сетевая зона: подсеть приложений") {
+        Container(analytics_service_2, "Сервис аналитики и инсайтов (экземпляр 2)", "Python 3.12 / FastAPI, pandas", "Показатели, сопоставление с рынком, отчёты и дайджесты")
+    }
+
+    Deployment_Node(worker_node, "Сервер фоновых обработчиков", "Ubuntu 22.04, Docker 26", "Сетевая зона: подсеть приложений") {
+        Container(market_collector, "Сервис сбора рыночной аналитики", "Apache Airflow (scheduler + worker), Python", "Конвейер задач: сбор рынка, загрузка витрин")
+    }
+
+    Deployment_Node(gpu_node, "GPU-сервер", "Ubuntu 22.04, NVIDIA L40S, CUDA 12", "Сетевая зона: подсеть приложений") {
+        Container(llm_server, "Сервер языковых моделей", "vLLM", "Локальная модель, извлечение показателей из отчётов")
+    }
+
+    Deployment_Node(analytics_node, "Аналитический сервер", "Ubuntu 22.04, ClickHouse", "Сетевая зона: подсеть данных") {
+        ContainerDb(dwh, "Аналитическое хранилище", "ClickHouse 24", "Витрины рынка, использования и эффективности; резервная копия раз в сутки")
+    }
+
+    Deployment_Node(data_node, "Сервер хранилищ", "Ubuntu 22.04, Docker 26, SSD", "Сетевая зона: подсеть данных") {
+        ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Файлы отчётов, дайджестов и резервные копии витрин")
+        Container(message_broker, "Брокер сообщений", "RabbitMQ", "События между сервисами")
+    }
+
+    Deployment_Node(db_replica, "Сервер БД (Реплика)", "Ubuntu 22.04 / Managed PostgreSQL", "Сетевая зона: подсеть данных") {
+        ContainerDb(database_replica, "Реплика базы данных", "PostgreSQL 16", "Горячий резерв, чтение проектов и кейсов")
+    }
+}
+
+Deployment_Node(corporate_net, "Корпоративная сеть заказчика", "Корпоративная сеть") {
+    System_Ext(crm_system, "CRM компании", "Битрикс24 / amoCRM, on-premise")
+}
+
+System_Ext(bi_platform, "BI-платформа", "Yandex DataLens / Apache Superset")
+System_Ext(market_sources, "Источники рыночной аналитики", "TAdviser, Strategy Partners, Росстат, СПАРК, RSS")
+
+Rel(bi_platform, api_gateway, "Читает витрины (только чтение)", "SQL over HTTPS, TCP 443, TLS 1.3")
+Rel(api_gateway, analytics_service_1, "Проксирует запросы дашбордов и отчётов (round robin)", "HTTP/JSON, TCP 8004")
+Rel(api_gateway, analytics_service_2, "Проксирует запросы дашбордов и отчётов (round robin)", "HTTP/JSON, TCP 8004")
+Rel(api_gateway, dwh, "Передаёт запросы BI (только чтение)", "HTTP, TCP 8123")
+
+Rel(analytics_service_1, dwh, "Читает витрины", "HTTP, TCP 8123")
+Rel(analytics_service_1, object_storage, "Сохраняет файлы отчётов", "HTTPS (S3 API), TCP 9000")
+Rel(analytics_service_1, message_broker, "Публикует report.ready", "AMQP, TCP 5672")
+Rel(analytics_service_2, dwh, "Читает витрины", "HTTP, TCP 8123")
+Rel(analytics_service_2, object_storage, "Сохраняет файлы отчётов", "HTTPS (S3 API), TCP 9000")
+Rel(analytics_service_2, message_broker, "Публикует report.ready", "AMQP, TCP 5672")
+
+Rel(market_collector, market_sources, "Забирает отчёты, рейтинги, новости", "HTTPS/REST, RSS, TCP 443, TLS 1.3")
+Rel(market_collector, crm_system, "Читает воронку сделок", "HTTPS/REST, TCP 443")
+Rel(market_collector, llm_server, "Извлекает показатели из отчётов", "HTTP/JSON (OpenAI API), TCP 8100")
+Rel(market_collector, object_storage, "Сохраняет исходные файлы отчётов", "HTTPS (S3 API), TCP 9000")
+Rel(market_collector, dwh, "Загружает витрины", "HTTP, TCP 8123")
+Rel(market_collector, message_broker, "Подписывается на material.generated", "AMQP, TCP 5672")
+Rel(market_collector, database_replica, "Читает проекты и кейсы (только чтение)", "SQL/TCP, TCP 5432")
+
+Rel(dwh, object_storage, "Резервная копия раз в сутки", "HTTPS (S3 API), TCP 9000")
+
+@enduml

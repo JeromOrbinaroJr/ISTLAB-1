@@ -1,0 +1,41 @@
+@startuml analyst_dynamic
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Динамическая диаграмма — Еженедельный рыночный дайджест (уровень компонентов analytics_service)
+
+Person(marketing_head, "Руководитель маркетинга", "Получает еженедельный дайджест рынка")
+
+Container_Boundary(analytics_service, "Сервис аналитики и инсайтов") {
+    Component(report_comp, "Сервис отчётов и дайджестов", "Python, Jinja2, APScheduler", "Оркестрирует формирование отчёта, запускается по расписанию")
+    Component(metrics_comp, "Сервис показателей", "pandas", "KPI использования базы знаний и эффективности материалов")
+    Component(benchmark_comp, "Сервис сопоставления с рынком", "pandas", "Сравнение проектов компании с рыночными индикаторами")
+    Component(export_comp, "Модуль экспорта", "openpyxl, WeasyPrint", "Контекст паттерна Стратегия: выгрузка в PDF, XLSX или CSV")
+    Component(dwh_repo_comp, "Репозиторий витрин", "clickhouse-connect", "Параметризованные запросы к витринам, только чтение")
+    Component(an_storage_comp, "Клиент хранилища отчётов", "aioboto3 (S3 API)", "Сохранение файлов отчётов")
+    Component(an_event_comp, "Публикатор событий", "aio-pika", "Публикация report.ready")
+}
+
+ContainerDb(dwh, "Аналитическое хранилище", "ClickHouse 24", "Витрины: рыночные показатели, использование базы знаний, эффективность материалов")
+ContainerDb(object_storage, "Объектное хранилище", "MinIO (S3 API)", "Файлы отчётов и дайджестов")
+Container(message_broker, "Брокер сообщений", "RabbitMQ", "События между сервисами")
+Container(core_api, "Сервис базы знаний", "Python 3.12 / FastAPI", "Принимает report.ready и инициирует рассылку")
+System_Ext(notification_gateway, "Сервисы доставки уведомлений", "SMTP-сервер, Telegram Bot API, FCM / APNs")
+
+Rel(report_comp, metrics_comp, "1. По расписанию (пн 09:00): ReportService.run_weekly_digest(); MetricsService.get_usage_kpi(period, group_by)", "Python Call")
+Rel(metrics_comp, dwh_repo_comp, "2. DwhRepository.fetch_usage(period, group_by)", "Python Call")
+Rel(dwh_repo_comp, dwh, "3. SELECT ... FROM mart_usage", "HTTP, TCP 8123")
+Rel(report_comp, benchmark_comp, "4. BenchmarkService.compare_projects(industry, period)", "Python Call")
+Rel(benchmark_comp, dwh_repo_comp, "5. DwhRepository.fetch_market(industry, metrics, period)", "Python Call")
+Rel(dwh_repo_comp, dwh, "6. SELECT ... FROM mart_market", "HTTP, TCP 8123")
+Rel(report_comp, export_comp, "7. ExportService.export(document, ExportFormat.PDF): set_strategy(PdfExportStrategy), render(document)", "Python Call")
+Rel(report_comp, an_storage_comp, "8. ReportStorage.save(key, content, content_type)", "Python Call")
+Rel(an_storage_comp, object_storage, "9. PUT reports/ezhenedelnyy_rynochnyy_daydzhest_20261012-20261018.pdf", "HTTPS (S3 API), TCP 9000")
+Rel(report_comp, an_event_comp, "10. EventPublisher.publish_report_ready(ReportReadyEvent)", "Python Call")
+Rel(an_event_comp, message_broker, "11. Публикует report.ready", "AMQP, TCP 5672")
+Rel(core_api, message_broker, "12. Получает report.ready (подписка)", "AMQP, TCP 5672")
+Rel(core_api, notification_gateway, "13. Письмо руководителю со ссылкой на дайджест", "SMTP/TLS, TCP 465")
+Rel(notification_gateway, marketing_head, "14. Доставляет письмо", "E-mail")
+
+@enduml
